@@ -1,8 +1,6 @@
 #!/bin/bash
-
 export BASE_PATH=$(pwd)
 export PYTHONPATH=$BASE_PATH
-
 python -u $BASE_PATH/main.py \
 --lr 0.005 --name camera_noise \
 --iterations 40017 \

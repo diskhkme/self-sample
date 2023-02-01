@@ -1,0 +1,13 @@
+conda create -n self-sample python=3.8
+conda activate self-sample
+conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit=11.3 -c pytorch -c conda-forge
+pip install open3d
+pip install kmeans-pytorch==0.3
+pip install scikit-learn==0.24.1
+pip install scipy==1.5.4
+pip install torch-cluster==1.5.8 -f https://pytorch-geometric.com/whl/torch-1.10.0+cu113.html
+pip install torch-geometric==1.6.3 -f https://pytorch-geometric.com/whl/torch-1.10.0+cu113.html
+pip install torch-scatter==2.0.5 -f https://pytorch-geometric.com/whl/torch-1.10.0+cu113.html
+pip install torch-sparse==0.6.8 -f https://pytorch-geometric.com/whl/torch-1.10.0+cu113.html
+pip install torch-spline-conv==1.2.1 -f https://pytorch-geometric.com/whl/torch-1.10.0+cu113.html
+pip install git+https://github.com/rusty1s/pytorch_sparse.git

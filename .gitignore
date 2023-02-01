@@ -1,0 +1,7 @@
+.idea/
+__pychache__/
+data/
+demo-results/
+demos/
+
+*.pyc

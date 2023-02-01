@@ -1,9 +1,13 @@
+import math
+
 import torch
 import random
 import util
 from torch.utils.data import Dataset
 from pathlib import Path
 import os
+import open3d as o3d
+import numpy as np
 from typing import List
 from kmeans_pytorch import kmeans
 NUM_CLUSTERS = 5
@@ -23,6 +27,12 @@ def get_dataset(mode='sweep'):
 
     if mode == 'density':
         return DensityData
+
+    if mode == 'saliency':
+        return PointFeatureData
+
+    if mode == 'noise':
+        return NoiseData
 
 
 class SweepData(Dataset):
@@ -60,7 +70,6 @@ class SweepData(Dataset):
     def __len__(self):
         return self.args.iterations
 
-
 class Random(Dataset):
     def __init__(self, pc, real_device, args):
         self.device = torch.device('cpu')
@@ -77,6 +86,27 @@ class Random(Dataset):
 
     def __len__(self):
         return self.args.iterations
+
+# ad-hoc noise는 학습이 잘 안됨 (당연?)
+# class NoiseData(Dataset):
+#     def __init__(self, pc, real_device, args):
+#         self.device = torch.device('cpu')
+#         self.real_device = real_device
+#         self.args = args
+#         self.pc: torch.Tensor = pc.to(self.device)
+#         self.n_pts = self.pc.shape[0]
+#
+#     def single(self, size):
+#         return self.pc[torch.randperm(self.n_pts)[:size], :3].permute(1, 0)
+#
+#     def __getitem__(self, item): # source와 target을 하나의 pair로 return
+#         source_sample_ind = torch.randperm(self.n_pts)[:self.args.D1]
+#         source_pc_sampled = self.pc[source_sample_ind, :3] + self.pc[source_sample_ind, 3:6] * torch.rand(len(source_sample_ind), 1) * self.args.noise
+#
+#         return source_pc_sampled, self.single(self.args.D2).to(self.device)
+#
+#     def __len__(self):
+#         return self.args.iterations
 
 
 class SubsetData(Dataset):
@@ -220,3 +250,76 @@ class DensityData(SubsetData):
 
         print(f'Not Dense Shape: {self.high_pc.shape}; Dense Shape {self.low_pc.shape}')
 
+class NoiseData(SubsetData):
+    def __init__(self, pc, real_device, args):
+        self.device = torch.device('cpu')
+        self.real_device = real_device
+        self.args = args
+        self.pc: torch.Tensor = pc.to(self.device)
+        self.n_pts = self.pc.shape[0]
+
+        self.pc, self.noise_ind = self.preprocess_pc(self.pc)
+        self.pc = self.pc.to(self.device)
+
+        super().__init__(self.pc, self.noise_ind, real_device, args) # self.pc에 noise를 삽입했으므로 변경된 point를 넣어야 함!
+
+        print(f'Noisy Shape(Pos): {self.high_pc.shape}; Noisy Shape(Neg) {self.low_pc.shape}')
+
+    def preprocess_pc(self, pc):
+        # convert tensor(n, 6) -> numpy(n, 3)-> o3d point cloud
+        numpy_pc = pc.numpy()[:,:3] # (n, 3)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(numpy_pc)
+
+        diag = pcd.get_max_bound() - pcd.get_min_bound()
+        diag_len = math.sqrt(diag[0] * diag[0] + diag[1] * diag[1] + diag[2] * diag[2])
+
+        source_sample_ind = torch.randperm(self.n_pts)[:int(self.n_pts * self.args.noise_ratio)]
+        pc[source_sample_ind,:3] += pc[source_sample_ind, 3:6] * torch.rand(len(source_sample_ind), 1) * (self.args.noise_level * diag_len)
+
+        noise_ind = torch.zeros(self.n_pts)
+        noise_ind[source_sample_ind] = 1
+
+        return torch.Tensor(pc), noise_ind
+
+
+class PointFeatureData(SubsetData):
+    def __init__(self, pc, real_device, args):
+        self.device = torch.device('cpu')
+        self.real_device = real_device
+        self.args = args
+        self.pc: torch.Tensor = pc.to(self.device)
+        self.n_pts = self.pc.shape[0]
+
+        self.saliency = self.preprocess_pc(self.pc).to(self.device)
+        self.saliency *= -1 # (TODO: check)
+
+        super().__init__(pc, self.saliency, real_device, args)
+
+        print(f'Salient Shape: {self.high_pc.shape}; Not Salient Shape {self.low_pc.shape}')
+
+    def preprocess_pc(self, pc):
+        # convert tensor(n, 6) -> numpy(n, 3)-> o3d point cloud
+        numpy_pc = pc.numpy()[:,:3] # (n, 3)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(numpy_pc)
+
+        diag = pcd.get_max_bound() - pcd.get_min_bound()
+        diag_len = math.sqrt(diag[0] * diag[0] + diag[1] * diag[1] + diag[2] * diag[2])
+
+        # estimate normal
+        pcd.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=diag_len*0.01, max_nn=30))
+
+        # calculate FPFH feature(http://www.open3d.org/docs/latest/tutorial/pipelines/global_registration.html?highlight=fpfh)
+        pcd_fpfh = o3d.pipelines.registration.compute_fpfh_feature(pcd,
+                                                                   o3d.geometry.KDTreeSearchParamHybrid(radius=diag_len*0.02, max_nn=100))
+
+        numpy_fpfh = np.transpose(np.asarray(pcd_fpfh.data)) # (n, 33)
+        mean_fpfh = np.mean(numpy_fpfh, axis=0) # (33)
+        distance_from_mean = np.linalg.norm(numpy_fpfh - mean_fpfh,axis=1) # (n) use as a weight
+
+        if self.args.inverted == False:
+            return torch.Tensor(distance_from_mean)
+        else:
+            return torch.Tensor(-distance_from_mean)

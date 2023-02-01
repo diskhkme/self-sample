@@ -14,6 +14,7 @@ from models import PointNet2Generator
 
 def train(args):
     device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
+    # device = torch.device('cpu')
     print(f'device: {device}')
 
     target_pc: torch.Tensor = util.get_input(args, center=True).unsqueeze(0).permute(0, 2, 1).to(device)
@@ -26,7 +27,7 @@ def train(args):
                    color=torch.tensor([255, 0, 0]).unsqueeze(-1).expand(3, target_pc.shape[-1]))
 
     model = PointNet2Generator(device, args)
-
+    # model = torch.nn.DataParallel(model)
 
     print(f'number of parameters: {util.n_params(model)}')
     model.initialize_params(args.init_var)
